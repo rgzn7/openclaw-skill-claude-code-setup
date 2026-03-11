@@ -2,6 +2,7 @@
 
 OpenClaw skill — 一键配置 Claude Code ↔ OpenClaw 双向集成。
 
+ 
 ## 做什么
 
 在 OpenClaw 里触发后，自动完成所有配置，无需手动改任何文件：
