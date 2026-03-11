@@ -1,31 +1,31 @@
 # setup-claude-code
 
-OpenClaw skill — 一键配置 Claude Code ↔ OpenClaw 双向集成。
+OpenClaw skill — one-command setup for Claude Code ↔ OpenClaw two-way integration.
 
-## 做什么
+## What It Does
 
-在 OpenClaw 里触发后，自动完成所有配置，无需手动改任何文件：
+Once triggered in OpenClaw, it automatically completes all configuration without any manual file editing:
 
-- 生成专用 hook token
-- 创建 `~/.claude/hooks/session-end.js`（Claude 会话结束时回调 OpenClaw）
-- 更新 `~/.claude/settings.json`（注册 SessionEnd hook、写入 token、开启 bypassPermissions）
-- 更新 `~/.openclaw/openclaw.json`（配置 hooks 接收端、acp 调起端、agents.list）
-- 安装 acpx 插件
+- Generates a dedicated hook token
+- Creates `~/.claude/hooks/session-end.js` (called back to OpenClaw when a Claude session ends)
+- Updates `~/.claude/settings.json` (registers SessionEnd hook, writes token, enables bypassPermissions)
+- Updates `~/.openclaw/openclaw.json` (configures hooks receiver, acp launcher, agents.list)
+- Installs the acpx plugin
 
-完成后 OpenClaw 可以：
+After setup, OpenClaw can:
 
-- 主动调起 Claude Code 执行任务（通过 acpx）
-- 在 Claude Code 会话结束时收到结构化回调事件
+- Actively launch Claude Code to execute tasks (via acpx)
+- Receive structured callback events when a Claude Code session ends
 
-## 安装
+## Installation
 
-### 方式一：clone 后加到 extraDirs（推荐）
+### Option 1: Clone and add to extraDirs (Recommended)
 
 ```bash
 git clone https://github.com/<your-username>/setup-claude-code ~/.openclaw/skills/setup-claude-code
 ```
 
-在 `~/.openclaw/openclaw.json` 的 `skills.load.extraDirs` 加入：
+Add the path to `skills.load.extraDirs` in `~/.openclaw/openclaw.json`:
 
 ```json
 "skills": {
@@ -38,57 +38,57 @@ git clone https://github.com/<your-username>/setup-claude-code ~/.openclaw/skill
 }
 ```
 
-然后重启 OpenClaw Gateway。
+Then restart OpenClaw Gateway.
 
-### 方式二：手动放置
+### Option 2: Manual placement
 
-把本仓库的 `SKILL.md` 放到任意目录，将该目录加入 `skills.load.extraDirs`。
+Copy `SKILL.md` from this repo into any directory, then add that directory to `skills.load.extraDirs`.
 
-## 使用
+## Usage
 
-安装完成后，在 OpenClaw 对话里说：
+After installation, say the following in an OpenClaw conversation:
 
 ```
 setup claude code
 ```
 
-或：
+or:
 
 ```
-配置 claude code 集成
+configure claude code integration
 ```
 
-skill 会自动执行所有步骤并输出结果摘要。
+The skill will automatically execute all steps and output a result summary.
 
-## 前提条件
+## Prerequisites
 
-- OpenClaw 已安装并运行
-- Node.js 可用（用于执行 session-end.js hook 脚本）
-- Claude Code CLI 已安装
+- OpenClaw installed and running
+- Node.js available (required to run the session-end.js hook script)
+- Claude Code CLI installed
 
-## 架构
+## Architecture
 
 ```
 OpenClaw main agent
-      │
-      │ 调起 claude-code agent（via acpx）
-      ▼
-  Claude Code 执行任务
-      │
-      │ SessionEnd hook 触发
-      ▼
+      |
+      | launch claude-code agent (via acpx)
+      v
+  Claude Code executes task
+      |
+      | SessionEnd hook fires
+      v
   session-end.js
-      │
-      │ POST /hooks/claude-code
-      ▼
+      |
+      | POST /hooks/claude-code
+      v
   OpenClaw Gateway
-      │
-      │ hooks.mappings 匹配
-      ▼
-  main agent 收到回调
+      |
+      | hooks.mappings matched
+      v
+  main agent receives callback
 ```
 
-## 兼容性
+## Compatibility
 
-- 支持 QClaw（Electron 封装版）和标准 OpenClaw CLI 环境
-- 幂等：重复运行不破坏已有配置，token 不重新生成
+- Supports both QClaw (Electron-wrapped) and standard OpenClaw CLI environments
+- Idempotent: repeated runs do not break existing configuration, token is not regenerated
