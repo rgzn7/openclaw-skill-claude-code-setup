@@ -89,8 +89,22 @@ async function main() {
     process.exit(0);
   }
 
+  // 只处理 OpenClaw 通过 acpx 调起的会话（session_id 以 oc- 开头）
+  const sessionId = raw.session_id || raw.sessionId || '';
+  if (!sessionId.startsWith('oc-')) {
+    process.exit(0);
+  }
+
   const transcriptPath = raw.transcript_path || raw.transcriptPath || null;
-  const summary = transcriptPath ? extractSummary(transcriptPath) : null;
+  const summary = (transcriptPath ? extractSummary(transcriptPath) : null);
+
+  // 没有真实内容时静默跳过：进程退出 ≠ 会话真正结束
+  // 只在 /clear 或有 transcript 内容时才通知 OpenClaw
+  if (!summary && raw.reason !== 'clear') {
+    process.exit(0);
+  }
+
+  const finalSummary = summary || 'Claude Code 会话已被清除';
 
   const payload = JSON.stringify({
     source: 'claude-code',
@@ -99,7 +113,7 @@ async function main() {
     status: raw.reason === 'clear' ? 'cleared' : 'completed',
     timestamp: new Date().toISOString(),
     cwd: process.env.PWD || null,
-    summary,
+    summary: finalSummary,
     raw,
   });
 
@@ -147,6 +161,22 @@ main();
 #!/usr/bin/env node
 
 const http = require('http');
+const fs = require('fs');
+
+function extractFromTranscript(transcriptPath) {
+  try {
+    const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const entry = JSON.parse(lines[i]);
+      const msg = entry.message || entry;
+      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+        const textBlock = msg.content.find(b => b.type === 'text');
+        if (textBlock && textBlock.text) return textBlock.text.trim();
+      }
+    }
+  } catch (_) {}
+  return null;
+}
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -173,11 +203,24 @@ async function main() {
     process.exit(0);
   }
 
-  // 从 stop hook payload 提取本轮回复内容
+  // 只处理 OpenClaw 通过 acpx 调起的会话（session_id 以 oc- 开头）
+  const sessionId = raw.session_id || raw.sessionId || '';
+  if (!sessionId.startsWith('oc-')) {
+    process.exit(0);
+  }
   let reply = null;
   if (raw.message && Array.isArray(raw.message.content)) {
     const textBlock = raw.message.content.find(b => b.type === 'text');
     if (textBlock && textBlock.text) reply = textBlock.text.trim();
+  }
+  // 兜底：从 transcript 提取
+  if (!reply) {
+    const transcriptPath = raw.transcript_path || raw.transcriptPath || null;
+    if (transcriptPath) reply = extractFromTranscript(transcriptPath);
+  }
+  // 还是没有内容则跳过，不发送噪音
+  if (!reply) {
+    process.exit(0);
   }
 
   const payload = JSON.stringify({
@@ -299,6 +342,7 @@ main();
       },
       "action": "agent",
       "agentId": "main",
+      "messageTemplate": "{{reply}}{{summary}}",
       "deliver": true
     }
   ]
@@ -357,6 +401,37 @@ main();
 
 3. 若两者都不可用，告知用户手动执行安装命令
 
+### Step 5b：将 acpx 加入全局 PATH
+
+检查 `acpx` 是否已在全局 PATH 中（`which acpx`）：
+- 若已存在且可用（`acpx --version` 正常返回），跳过
+- 若不存在或报错，创建包装脚本
+
+**注意：不能用软链接。** acpx 的启动脚本用 `$basedir` 推算 `cli.js` 路径，软链接会导致 basedir 指向错误目录，报 `Cannot find module`。必须用包装脚本写死绝对路径。
+
+acpx 实际路径从 `openclaw.json` 的 `plugins.load.paths` 中找到包含 `acpx` 的 extensions 目录，然后：
+- cli.js：`<extensionsDir>/acpx/node_modules/acpx/dist/cli.js`
+- NODE_PATH：`<openclawDir>/node_modules/.pnpm/acpx@<version>_<hash>/node_modules/acpx/dist/node_modules:<openclawDir>/node_modules/.pnpm/acpx@<version>_<hash>/node_modules/acpx/node_modules:<openclawDir>/node_modules/.pnpm/acpx@<version>_<hash>/node_modules:<openclawDir>/node_modules/.pnpm/node_modules`
+
+**按优先级尝试写入包装脚本：**
+
+1. `/opt/homebrew/bin/acpx`（macOS Apple Silicon）
+2. `/usr/local/bin/acpx`（macOS Intel）
+
+写入内容（将路径替换为实际值）：
+
+```sh
+#!/bin/sh
+export NODE_PATH="<node_path>"
+exec node <extensionsDir>/acpx/node_modules/acpx/dist/cli.js "$@"
+```
+
+```bash
+chmod +x /opt/homebrew/bin/acpx
+```
+
+写入后执行 `acpx --version` 验证，若正常返回版本号则成功。若两个目录都无写权限，告知用户手动执行。
+
 ### Step 6：完成提示
 
 输出安装摘要，告知用户：
@@ -366,6 +441,7 @@ main();
 ✅ ~/.claude/settings.json 已更新
 ✅ ~/.openclaw/openclaw.json 已更新
 ✅ acpx 插件已安装（或已存在）
+✅ acpx 已加入全局 PATH（或已存在）
 
 ⚠️  需要重启 OpenClaw Gateway 使配置生效：
    - QClaw 用户：在 QClaw 应用中重启，或等待自动重启
