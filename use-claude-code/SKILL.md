@@ -48,11 +48,15 @@ echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -
 ### 阶段一：发起任务
 
 1. 确定本次对话的 `sessionName`（如已有则复用，否则新建，必须以 `oc-` 开头）
-2. 将用户需求原文写入 stdin，执行：
+2. **先确保 session 存在**（每次发消息前必须执行，幂等，已存在则复用）：
    ```bash
-   echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -
+   acpx claude sessions ensure --name <sessionName>
    ```
-3. 命令发出后不阻塞，告知用户："已交给 Claude Code，正在处理……"
+3. 将用户需求原文写入 stdin，**后台执行**（必须后台，否则 shell 工具超时会 SIGTERM 杀进程，导致 hook 来不及触发）：
+   ```bash
+   nohup sh -c 'echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &
+   ```
+4. 命令发出后立即返回，告知用户："已交给 Claude Code，正在处理……"
 
 ### 阶段二：处理回调（Stop 事件）
 
@@ -63,7 +67,8 @@ echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -
 3. 等待用户下一条消息
 
 **用户继续回复时：**
-- 复用相同 `sessionName`，再次执行 `acpx claude prompt --session <sessionName>`
+- 先执行 `acpx claude sessions ensure --name <sessionName>` 确认 session 存在
+- 再后台执行：`nohup sh -c 'echo "<消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &`
 - Claude Code 会在同一会话上下文中继续处理
 
 ### 阶段三：处理回调（SessionEnd 事件）
@@ -92,6 +97,7 @@ echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -
 |---|---|
 | `acpx` 命令不存在 | 告知用户，提示检查 acpx 是否已加入 PATH |
 | `Failed to spawn agent command: claude` | `claude` CLI 未安装或不在 PATH，告知用户检查 Claude Code 安装 |
+| `Exec failed ... signal SIGTERM` | acpx 进程被超时杀掉，检查是否用了后台执行（`nohup ... &`） |
 | stop 回调中 `reply` 为空 | 跳过，继续等待下一个事件 |
 | 60 秒内无任何回调 | 提示用户 Claude Code 可能仍在处理（复杂任务耗时较长），继续等待 |
 | session_end 未收到 summary | 仅告知会话已结束，不强行总结 |
