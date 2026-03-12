@@ -137,6 +137,93 @@ async function main() {
 main();
 ```
 
+### Step 2b：写入 stop.js
+
+目标路径：`~/.claude/hooks/stop.js`
+
+写入以下内容（将 `<TOKEN>` 替换为实际 token）：
+
+```js
+#!/usr/bin/env node
+
+const http = require('http');
+
+function readStdin() {
+  return new Promise((resolve) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => resolve(data.trim()));
+    process.stdin.on('error', () => resolve(''));
+    setTimeout(() => resolve(data.trim()), 100);
+  });
+}
+
+async function main() {
+  const stdinText = await readStdin();
+
+  let raw = {};
+  if (stdinText) {
+    try { raw = JSON.parse(stdinText); } catch (_) { raw = { text: stdinText }; }
+  }
+
+  const token = process.env.OPENCLAW_HOOK_TOKEN;
+  if (!token) {
+    console.error('[stop hook] OPENCLAW_HOOK_TOKEN not set, skipping');
+    process.exit(0);
+  }
+
+  // 从 stop hook payload 提取本轮回复内容
+  let reply = null;
+  if (raw.message && Array.isArray(raw.message.content)) {
+    const textBlock = raw.message.content.find(b => b.type === 'text');
+    if (textBlock && textBlock.text) reply = textBlock.text.trim();
+  }
+
+  const payload = JSON.stringify({
+    source: 'claude-code',
+    event: 'stop',
+    session_id: raw.session_id || raw.sessionId || null,
+    timestamp: new Date().toISOString(),
+    cwd: process.env.PWD || null,
+    reply,
+    raw,
+  });
+
+  const options = {
+    hostname: 'localhost',
+    port: 18789,
+    path: '/hooks/claude-code',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+      'Authorization': `Bearer ${token}`,
+    },
+  };
+
+  const req = http.request(options, (res) => {
+    res.resume();
+    res.on('end', () => process.exit(0));
+  });
+
+  req.on('error', (err) => {
+    console.error('[stop hook] request failed:', err.message);
+    process.exit(0);
+  });
+
+  req.setTimeout(5000, () => {
+    req.destroy();
+    process.exit(0);
+  });
+
+  req.write(payload);
+  req.end();
+}
+
+main();
+```
+
 ### Step 3：更新 ~/.claude/settings.json
 
 需要确保以下字段存在（不覆盖其他已有字段，使用 JSON merge 方式）：
@@ -150,6 +237,16 @@ main();
     "defaultMode": "bypassPermissions"
   },
   "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/<username>/.claude/hooks/stop.js"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
