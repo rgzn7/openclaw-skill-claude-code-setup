@@ -26,10 +26,12 @@ metadata:
 
 ## sessionName 命名规范
 
-**必须以 `oc-` 开头**，这是 stop.js 区分 OpenClaw 调起的会话与用户直接对话的唯一依据。
+**必须以 `oc-` 开头**，作为会话的命名约定，便于在 acpx session 列表中识别 OpenClaw 调起的会话。
 
 - ✅ 正确：`oc-<userId>-<timestamp>`、`oc-<openclawSessionId>`
-- ❌ 错误：任何不以 `oc-` 开头的名称——stop hook 会静默跳过，OpenClaw 收不到回调
+- ❌ 错误：任何不以 `oc-` 开头的名称
+
+> 注意：stop.js hook 收到的是 Claude Code 内部的 `session_id`（UUID），与 acpx 的 `--session <name>` 是不同字段，无法在 hook 里按 name 过滤。全量回调均会送达 OpenClaw。
 
 ## 调用方式
 
@@ -49,13 +51,25 @@ echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -
 
 1. 确定本次对话的 `sessionName`（如已有则复用，否则新建，必须以 `oc-` 开头）
 2. **先确保 session 存在**（每次发消息前必须执行，幂等，已存在则复用）：
-   ```bash
-   acpx claude sessions ensure --name <sessionName>
-   ```
-3. 将用户需求原文写入 stdin，**后台执行**（必须后台，否则 shell 工具超时会 SIGTERM 杀进程，导致 hook 来不及触发）：
-   ```bash
-   nohup sh -c 'echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &
-   ```
+   - 当前实测 `acpx claude sessions ensure` **不支持 `--cwd` 参数**。
+   - 若用户**指定了项目目录** `<projectDir>`，应当先切到该目录再执行：
+     ```bash
+     cd <projectDir> && acpx claude sessions ensure --name <sessionName>
+     ```
+   - 否则：
+     ```bash
+     acpx claude sessions ensure --name <sessionName>
+     ```
+3. 将用户需求原文写入 stdin，**后台执行**：
+   - 若用户**指定了项目目录** `<projectDir>`：
+     ```bash
+     nohup sh -c 'cd <projectDir> && echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &
+     ```
+   - 否则：
+     ```bash
+     nohup sh -c 'echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &
+     ```
+   ⚠️ **不要先在当前目录建 session 再切换目录发任务**——`ensure` 不支持 `--cwd`，正确做法是：在目标目录里执行 ensure，同一目录里执行 prompt。
 4. 命令发出后立即返回，告知用户："已交给 Claude Code，正在处理……"
 
 ### 阶段二：处理回调（Stop 事件）
@@ -67,8 +81,17 @@ echo "<用户消息>" | acpx claude prompt --session <sessionName> --file -
 3. 等待用户下一条消息
 
 **用户继续回复时：**
-- 先执行 `acpx claude sessions ensure --name <sessionName>` 确认 session 存在
-- 再后台执行：`nohup sh -c 'echo "<消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &`
+- 若有 `<projectDir>`，先执行：`cd <projectDir> && acpx claude sessions ensure --name <sessionName>`
+- 若无 `<projectDir>`，执行：`acpx claude sessions ensure --name <sessionName>`
+- 再后台执行：
+  - 有 `<projectDir>`：
+    ```bash
+    nohup sh -c 'cd <projectDir> && echo "<消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &
+    ```
+  - 无 `<projectDir>`：
+    ```bash
+    nohup sh -c 'echo "<消息>" | acpx claude prompt --session <sessionName> --file -' > /tmp/acpx-<sessionName>.log 2>&1 &
+    ```
 - Claude Code 会在同一会话上下文中继续处理
 
 ### 阶段三：处理回调（SessionEnd 事件）

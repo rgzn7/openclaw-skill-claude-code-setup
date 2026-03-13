@@ -62,8 +62,7 @@ function readStdin() {
 function extractSummary(transcriptPath) {
   try {
     const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-    // 从后往前找最后一条 assistant 文本消息
-    for (let i = lines.length - 1; i >= 0; i--) {
+      for (let i = lines.length - 1; i >= 0; i--) {
       const entry = JSON.parse(lines[i]);
       const msg = entry.message || entry;
       if (msg.role === 'assistant' && Array.isArray(msg.content)) {
@@ -89,12 +88,6 @@ async function main() {
     process.exit(0);
   }
 
-  // 只处理 OpenClaw 通过 acpx 调起的会话（session_id 以 oc- 开头）
-  const sessionId = raw.session_id || raw.sessionId || '';
-  if (!sessionId.startsWith('oc-')) {
-    process.exit(0);
-  }
-
   const transcriptPath = raw.transcript_path || raw.transcriptPath || null;
   const summary = (transcriptPath ? extractSummary(transcriptPath) : null);
 
@@ -113,6 +106,7 @@ async function main() {
     status: raw.reason === 'clear' ? 'cleared' : 'completed',
     timestamp: new Date().toISOString(),
     cwd: process.env.PWD || null,
+    message: finalSummary,
     summary: finalSummary,
     raw,
   });
@@ -161,22 +155,6 @@ main();
 #!/usr/bin/env node
 
 const http = require('http');
-const fs = require('fs');
-
-function extractFromTranscript(transcriptPath) {
-  try {
-    const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const entry = JSON.parse(lines[i]);
-      const msg = entry.message || entry;
-      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-        const textBlock = msg.content.find(b => b.type === 'text');
-        if (textBlock && textBlock.text) return textBlock.text.trim();
-      }
-    }
-  } catch (_) {}
-  return null;
-}
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -203,22 +181,7 @@ async function main() {
     process.exit(0);
   }
 
-  // 只处理 OpenClaw 通过 acpx 调起的会话（session_id 以 oc- 开头）
-  const sessionId = raw.session_id || raw.sessionId || '';
-  if (!sessionId.startsWith('oc-')) {
-    process.exit(0);
-  }
-  let reply = null;
-  if (raw.message && Array.isArray(raw.message.content)) {
-    const textBlock = raw.message.content.find(b => b.type === 'text');
-    if (textBlock && textBlock.text) reply = textBlock.text.trim();
-  }
-  // 兜底：从 transcript 提取
-  if (!reply) {
-    const transcriptPath = raw.transcript_path || raw.transcriptPath || null;
-    if (transcriptPath) reply = extractFromTranscript(transcriptPath);
-  }
-  // 还是没有内容则跳过，不发送噪音
+  const reply = raw.last_assistant_message || null;
   if (!reply) {
     process.exit(0);
   }
@@ -226,9 +189,10 @@ async function main() {
   const payload = JSON.stringify({
     source: 'claude-code',
     event: 'stop',
-    session_id: raw.session_id || raw.sessionId || null,
+    session_id: raw.session_id || null,
     timestamp: new Date().toISOString(),
-    cwd: process.env.PWD || null,
+    cwd: raw.cwd || null,
+    message: reply,
     reply,
     raw,
   });
@@ -342,7 +306,7 @@ main();
       },
       "action": "agent",
       "agentId": "main",
-      "messageTemplate": "{{reply}}{{summary}}",
+      "messageTemplate": "{{message}}",
       "deliver": true
     }
   ]
