@@ -16,7 +16,7 @@ metadata:
 本 skill 负责自动完成 Claude Code ↔ OpenClaw 双向集成的全部配置，包括：
 
 1. 生成专用 hook token
-2. 创建/更新 `~/.claude/hooks/session-end.js`
+2. 创建/更新 `~/.claude/hooks/stop.js`
 3. 更新 `~/.claude/settings.json`（hooks、env、permissions）
 4. 更新 `~/.openclaw/openclaw.json`（hooks、acp、agents.list）
 5. 安装 acpx 插件
@@ -29,127 +29,18 @@ metadata:
 ```
 读取 ~/.claude/settings.json
 读取 ~/.openclaw/openclaw.json
-检查 ~/.claude/hooks/session-end.js 是否存在
+检查 ~/.claude/hooks/stop.js 是否存在
 ```
 
 判断是否已有 `OPENCLAW_HOOK_TOKEN`：
 - 若已有，**复用原 token，不重新生成**
 - 若没有，生成新 token：`openssl rand -hex 16` 前加前缀 `clhook_`
 
-### Step 2：写入 session-end.js
-
-目标路径：`~/.claude/hooks/session-end.js`
-
-写入以下内容（将 `<TOKEN>` 替换为实际 token）：
-
-```js
-#!/usr/bin/env node
-
-const http = require('http');
-const fs = require('fs');
-
-function readStdin() {
-  return new Promise((resolve) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => { data += chunk; });
-    process.stdin.on('end', () => resolve(data.trim()));
-    process.stdin.on('error', () => resolve(''));
-    setTimeout(() => resolve(data.trim()), 100);
-  });
-}
-
-function extractSummary(transcriptPath) {
-  try {
-    const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-      for (let i = lines.length - 1; i >= 0; i--) {
-      const entry = JSON.parse(lines[i]);
-      const msg = entry.message || entry;
-      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-        const textBlock = msg.content.find(b => b.type === 'text');
-        if (textBlock && textBlock.text) return textBlock.text.trim();
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-
-async function main() {
-  const stdinText = await readStdin();
-
-  let raw = {};
-  if (stdinText) {
-    try { raw = JSON.parse(stdinText); } catch (_) { raw = { text: stdinText }; }
-  }
-
-  const token = process.env.OPENCLAW_HOOK_TOKEN;
-  if (!token) {
-    console.error('[session-end hook] OPENCLAW_HOOK_TOKEN not set, skipping');
-    process.exit(0);
-  }
-
-  const transcriptPath = raw.transcript_path || raw.transcriptPath || null;
-  const summary = (transcriptPath ? extractSummary(transcriptPath) : null);
-
-  // 没有真实内容时静默跳过：进程退出 ≠ 会话真正结束
-  // 只在 /clear 或有 transcript 内容时才通知 OpenClaw
-  if (!summary && raw.reason !== 'clear') {
-    process.exit(0);
-  }
-
-  const finalSummary = summary || 'Claude Code 会话已被清除';
-
-  const payload = JSON.stringify({
-    source: 'claude-code',
-    event: 'session_end',
-    session_id: raw.session_id || raw.sessionId || null,
-    status: raw.reason === 'clear' ? 'cleared' : 'completed',
-    timestamp: new Date().toISOString(),
-    cwd: process.env.PWD || null,
-    message: finalSummary,
-    summary: finalSummary,
-    raw,
-  });
-
-  const options = {
-    hostname: 'localhost',
-    port: 18789,
-    path: '/hooks/claude-code',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(payload),
-      'Authorization': `Bearer ${token}`,
-    },
-  };
-
-  const req = http.request(options, (res) => {
-    res.resume();
-    res.on('end', () => process.exit(0));
-  });
-
-  req.on('error', (err) => {
-    console.error('[session-end hook] request failed:', err.message);
-    process.exit(0);
-  });
-
-  req.setTimeout(5000, () => {
-    req.destroy();
-    process.exit(0);
-  });
-
-  req.write(payload);
-  req.end();
-}
-
-main();
-```
-
-### Step 2b：写入 stop.js
+### Step 2：写入 stop.js
 
 目标路径：`~/.claude/hooks/stop.js`
 
-写入以下内容（将 `<TOKEN>` 替换为实际 token）：
+写入以下内容：
 
 ```js
 #!/usr/bin/env node
@@ -253,16 +144,6 @@ main();
           }
         ]
       }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /Users/<username>/.claude/hooks/session-end.js"
-          }
-        ]
-      }
     ]
   }
 }
@@ -271,7 +152,6 @@ main();
 **注意：**
 - `command` 路径中的用户名从 `$HOME` 环境变量或 `~` 展开获取
 - 若 `env`、`permissions`、`hooks` 已存在，只补充缺少的字段，不覆盖已有内容
-- `hooks.SessionEnd` 已存在时，检查是否已有 session-end.js 的条目，有则跳过
 
 ### Step 4：更新 ~/.openclaw/openclaw.json
 
@@ -401,7 +281,7 @@ chmod +x /opt/homebrew/bin/acpx
 输出安装摘要，告知用户：
 
 ```
-✅ session-end.js 已创建
+✅ stop.js 已创建
 ✅ ~/.claude/settings.json 已更新
 ✅ ~/.openclaw/openclaw.json 已更新
 ✅ acpx 插件已安装（或已存在）
