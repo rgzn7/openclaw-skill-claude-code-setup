@@ -91,5 +91,6 @@ OpenClaw main agent
 
 ## 兼容性
 
+- **仅支持 macOS**，暂不支持 Windows 和 Linux
 - 支持 QClaw（Electron 封装版）和标准 OpenClaw CLI 环境
 - 幂等：重复运行不破坏已有配置，token 不重新生成

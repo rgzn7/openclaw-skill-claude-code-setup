@@ -91,5 +91,6 @@ OpenClaw main agent
 
 ## Compatibility
 
+- **macOS only** — Windows and Linux are not currently supported
 - Supports both QClaw (Electron-wrapped) and standard OpenClaw CLI environments
 - Idempotent: repeated runs do not break existing configuration, token is not regenerated
