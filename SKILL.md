@@ -1,8 +1,8 @@
 ---
 name: setup-claude-code
 description: |
-  配置 Claude Code 在 OpenClaw 中的 ACP 集成环境。目标是启用两种能力：
-  (1) 持续会话：通过 ACP thread/session 让 Claude Code 保持独立长期会话，结果通过 stop hook 回流到发起渠道；
+  配置 Claude Code 在 OpenClaw 中的集成环境。目标是启用两种能力：
+  (1) 持续会话：通过 direct acpx 维持独立 Claude Code 会话，结果通过 stop hook 回流到发起渠道（聊天渠道不支持线程绑定，ACP session/thread 路不通）；
   (2) 研究回流：通过 ACP run + streamTo=parent 让 Claude Code 在当前会话内完成一次研究并把结果带回（仅适用于有 parent session 的上下文）。
   触发词：setup claude code / 配置 claude code / 初始化 claude code 集成
 metadata:
@@ -16,18 +16,17 @@ metadata:
 
 本 skill 负责配置 Claude Code 在 OpenClaw 中的 ACP 集成，分为两类能力：
 
-1. 启用 Claude Code 的 ACP runtime（主链路）
-2. 确保持久会话可用（`thread: true` + `mode: "session"`，结果通过 hook 回流）
+1. 安装并验证 acpx（持续会话的执行工具）
+2. 确保持久会话可用（direct acpx + stop hook 回流）
 3. 确保研究回流可用（`mode: "run"` + `streamTo: "parent"`，仅限有 parent session 的上下文）
-4. 安装并验证 acpx / ACP 相关依赖
-5. 配置 Claude Code stop hook（持续会话模式的必需回流链路）
-6. 提示用户重启 gateway
+4. 配置 Claude Code stop hook（持续会话结果回流的必需链路）
+5. 提示用户重启 gateway
 
 **核心原则：**
-- **持续会话**的结果回流依赖 stop hook：聊天渠道发起时没有 parent session，必须走 hook 把结果推回发起方
+- **持续会话**走 direct acpx：聊天渠道不支持线程绑定，ACP session/thread 路不通；acpx 维持会话身份，stop hook 把结果推回发起渠道
 - **研究回流**依赖 `streamTo=parent`：仅在 OpenClaw agent 上下文内调用时有效，聊天渠道不适用
-- 两种模式回流机制不同，不要混用
-- hook 是持续会话的**主链路**，不是 debug 附件
+- 两种模式实现路径和回流机制完全不同，不要混用
+- hook 是持续会话的**主回流链路**，不是 debug 附件
 
 ## Claude Code 的两种推荐模式
 
@@ -39,22 +38,17 @@ metadata:
 - "给 Claude Code 一个独立会话继续聊"
 - 从聊天渠道（Telegram、QQBot 等）发起的任何长期协作
 
-推荐参数：
+实现方式：**direct acpx**（聊天渠道不支持线程绑定，ACP session/thread 不可用）
 
-```json
-{
-  "runtime": "acp",
-  "agentId": "claude-code",
-  "thread": true,
-  "mode": "session"
-}
+```bash
+acpx claude sessions ensure --name <sessionName>
+echo "<任务>" | acpx claude prompt --session <sessionName> --file -
 ```
 
 特点：
-- 会创建并绑定独立 thread / 持续 session，OpenClaw 代管 session ID
+- sessionName 由 OpenClaw 代管，全程保持不变（必须以 `oc-` 开头）
 - 每轮任务完成后，Claude Code 通过 stop hook 把结果推回发起渠道
-- **不附带 `streamTo: "parent"`**，聊天渠道无 parent session，加了也无效
-- **必须配置 stop hook + openclaw hooks 段**，否则持续会话的结果无法回流
+- **必须配置 stop hook + openclaw hooks 段**，否则结果无法回流
 
 ### 模式 B：研究回流（当前会话内完成一轮研究并带回结果）
 
